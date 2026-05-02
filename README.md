@@ -77,7 +77,7 @@ python test_scan.py 25.0330 121.5654 --title "台北 101"
 
 ```bash
 # 1. Clone 專案
-git clone https://github.com/kevincylee1127/ShitakeCo.git /opt/pikmin
+git clone https://github.com/kevincylee1127/PikminRadarBot.git /opt/pikmin
 cd /opt/pikmin
 
 # 2. 建立 .env
