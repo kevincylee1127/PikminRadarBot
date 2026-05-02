@@ -75,6 +75,18 @@ def _tag_filters(center: str, r: int) -> list:
         ("aeroway", "terminal"),
         ("aeroway", "aerodrome"),
         ("railway", "station"),
+        ("shop",    "convenience"),
+        ("shop",    "supermarket"),
+        ("shop",    "bakery"),
+        ("amenity", "library"),
+        ("amenity", "hospital"),
+        ("tourism", "hotel"),
+        ("tourism", "motel"),
+        ("leisure", "stadium"),
+        ("leisure", "park"),
+        ("shop",    "hairdresser"),
+        ("natural", "beach"),
+        ("tourism", "museum"),
     ]
     filters = []
     for key, val in pairs:
@@ -82,7 +94,7 @@ def _tag_filters(center: str, r: int) -> list:
         filters.append('node{}(around:{},{});'.format(tag, r, center))
         filters.append('way{}(around:{},{});'.format(tag, r, center))
         # relation for area-type tags
-        if key in ("tourism", "natural", "landuse", "aeroway"):
+        if key in ("tourism", "natural", "landuse", "aeroway", "leisure"):
             filters.append('relation{}(around:{},{});'.format(tag, r, center))
     return filters
 

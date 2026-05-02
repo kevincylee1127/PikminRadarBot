@@ -113,6 +113,73 @@ PIKMIN_RULES: list[PikminRule] = [
             {"key": "railway", "value": "station"},
         ],
     },
+    {
+        "name": "🏪 便利商店",
+        "conditions": [
+            {"key": "shop", "value": "convenience"},
+        ],
+    },
+    {
+        "name": "🛒 超市",
+        "conditions": [
+            {"key": "shop", "value": "supermarket"},
+        ],
+    },
+    {
+        "name": "🍞 麵包店",
+        "conditions": [
+            {"key": "shop", "value": "bakery"},
+        ],
+    },
+    {
+        "name": "📚 圖書館",
+        "conditions": [
+            {"key": "amenity", "value": "library"},
+        ],
+    },
+    {
+        "name": "🏥 醫院",
+        "conditions": [
+            {"key": "amenity", "value": "hospital"},
+        ],
+    },
+    {
+        "name": "🏨 飯店",
+        "conditions": [
+            {"key": "tourism", "value": "hotel"},
+            {"key": "tourism", "value": "motel"},
+        ],
+    },
+    {
+        "name": "🏟️ 體育場",
+        "conditions": [
+            {"key": "leisure", "value": "stadium"},
+        ],
+    },
+    {
+        "name": "💇 美髮沙龍",
+        "conditions": [
+            {"key": "shop", "value": "hairdresser"},
+        ],
+    },
+    {
+        "name": "🏖️ 海灘",
+        "conditions": [
+            {"key": "natural", "value": "beach"},
+        ],
+    },
+    {
+        "name": "🌸 公園",
+        "conditions": [
+            {"key": "leisure", "value": "park"},
+        ],
+    },
+    {
+        "name": "🏛️ 博物館",
+        "conditions": [
+            {"key": "tourism", "value": "museum"},
+        ],
+    },
 ]
 
 
