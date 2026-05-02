@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 複製應用程式原始碼
-COPY main.py config.py osm_service.py mapping.py ./
+COPY main.py config.py osm_service.py mapping.py cache_service.py analyzer.py ./
 
 # 宣告容器監聽 Port
 EXPOSE 8000
