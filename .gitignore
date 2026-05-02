@@ -1,0 +1,17 @@
+# 環境變數（含 LINE 金鑰，絕對不可 commit）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.mypy_cache/
+.ruff_cache/
+
+# 虛擬環境
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
