@@ -64,6 +64,7 @@ PIKMIN_RULES: list[PikminRule] = [
     {
         "name": "💊 藥妝店",
         "conditions": [
+            {"key": "amenity", "value": "pharmacy"},
             {"key": "shop", "value": "chemist"},
             {"key": "shop", "value": "drugstore"},
         ],
@@ -98,6 +99,7 @@ PIKMIN_RULES: list[PikminRule] = [
         "name": "🖼️ 美術館",
         "conditions": [
             {"key": "tourism", "value": "gallery"},
+            {"key": "amenity", "value": "arts_centre"},
         ],
     },
     {

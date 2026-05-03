@@ -75,6 +75,8 @@ def _tag_filters(center: str, r: int) -> list:
         ("aeroway", "terminal"),
         ("aeroway", "aerodrome"),
         ("railway", "station"),
+        ("amenity", "pharmacy"),
+        ("amenity", "arts_centre"),
         ("shop",    "convenience"),
         ("shop",    "supermarket"),
         ("shop",    "bakery"),
