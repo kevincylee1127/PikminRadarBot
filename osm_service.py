@@ -169,20 +169,18 @@ async def query_nearest_pikmin(
     radius_m: int | None = None,
 ) -> tuple[str, float] | None:
     """
-    Nearest POI mode: query OSM elements with coordinates, find the closest
-    one that matches a pikmin rule, and return (pikmin_name, distance_m).
-    Returns None if nothing found.
+    Nearest POI mode: use the stable 'out tags' query (same as instant mode),
+    then find the closest matching element.
 
-    Note: search radius is fixed at 300m to ensure large buildings (cinemas,
-    museums, etc.) whose OSM center may be offset from the user are still found.
-    The result is still only the single nearest POI.
+    Nodes have lat/lon in 'out tags' output directly.
+    Ways/relations have no coordinates in 'out tags', so they are treated as
+    distance=0 (they matched 'around:N' so they are definitely nearby).
+    This keeps the query simple and reliable across all mirrors.
     """
-    # Always search 300m to catch large buildings with offset centers,
-    # but still return only the nearest single result
-    search_radius = 300
+    from math import atan2, cos, radians, sin, sqrt
 
-    # Use scan query to get element coordinates
-    query = _build_scan_query(lat, lon, search_radius)
+    search_radius = 300
+    query = build_overpass_query(lat, lon, search_radius)
 
     try:
         data = await _fetch_overpass(query)
@@ -191,40 +189,35 @@ async def query_nearest_pikmin(
         return None
 
     elements: list[dict] = data.get("elements", [])
-    logger.info("Nearest query (%.6f, %.6f) r=%dm: %d elements", lat, lon, radius_m, len(elements))
+    logger.info("Nearest query (%.6f, %.6f) r=%dm: %d elements", lat, lon, search_radius, len(elements))
 
     if not elements:
         return None
 
-    # Find closest element that matches a pikmin rule
     best_name: str | None = None
     best_dist: float = float("inf")
 
+    R = 6371000
     for el in elements:
-        # Get coordinates
-        if el.get("type") == "node":
-            elat, elon = el.get("lat"), el.get("lon")
-        else:
-            center = el.get("center", {})
-            elat, elon = center.get("lat"), center.get("lon")
-
-        if elat is None or elon is None:
-            continue
-
-        # Check if it matches a pikmin rule
         tags = el.get("tags", {})
         name = match_pikmin(tags)
         if name is None:
             continue
 
-        # Calculate distance using Haversine
-        from math import radians, sin, cos, sqrt, atan2
-        R = 6371000
-        phi1, phi2 = radians(lat), radians(elat)
-        dphi = radians(elat - lat)
-        dlam = radians(elon - lon)
-        a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlam / 2) ** 2
-        dist = R * 2 * atan2(sqrt(a), sqrt(1 - a))
+        if el.get("type") == "node":
+            elat = el.get("lat")
+            elon = el.get("lon")
+            if elat is not None and elon is not None:
+                phi1, phi2 = radians(lat), radians(elat)
+                dphi = radians(elat - lat)
+                dlam = radians(elon - lon)
+                a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlam / 2) ** 2
+                dist = R * 2 * atan2(sqrt(a), sqrt(1 - a))
+            else:
+                dist = 0.0
+        else:
+            # way/relation: no coords in out tags, treat as present at location
+            dist = 0.0
 
         if dist < best_dist:
             best_dist = dist
