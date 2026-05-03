@@ -172,12 +172,17 @@ async def query_nearest_pikmin(
     Nearest POI mode: query OSM elements with coordinates, find the closest
     one that matches a pikmin rule, and return (pikmin_name, distance_m).
     Returns None if nothing found.
+
+    Note: search radius is fixed at 300m to ensure large buildings (cinemas,
+    museums, etc.) whose OSM center may be offset from the user are still found.
+    The result is still only the single nearest POI.
     """
-    if radius_m is None:
-        radius_m = settings.search_radius_m
+    # Always search 300m to catch large buildings with offset centers,
+    # but still return only the nearest single result
+    search_radius = 300
 
     # Use scan query to get element coordinates
-    query = _build_scan_query(lat, lon, radius_m)
+    query = _build_scan_query(lat, lon, search_radius)
 
     try:
         data = await _fetch_overpass(query)
