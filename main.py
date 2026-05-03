@@ -34,7 +34,7 @@ from analyzer import find_best_location, google_maps_url, summarize_pikmin_count
 from config import settings
 from geo_service import extract_url, resolve_coords
 from mapping import PIKMIN_RULES
-from osm_service import query_nearby_pikmin, query_scan_elements
+from osm_service import query_nearby_pikmin, query_nearest_pikmin, query_scan_elements
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,12 +80,11 @@ def _verify_signature(body: bytes, signature: str) -> None:
 
 # ── 即時模式回覆 ──────────────────────────────
 
-def _build_instant_reply(title: str, pikmin_set: set) -> str:
-    if not pikmin_set:
+def _build_instant_reply(title: str, result: tuple | None) -> str:
+    if result is None:
         return "📍 座標：{}\n附近僅有路邊皮克敏 🌿".format(title)
-    ordered = [rule["name"] for rule in PIKMIN_RULES if rule["name"] in pikmin_set]
-    items = "\n".join("- {}".format(n) for n in ordered)
-    return "📍 座標：{}\n附近可能發現的飾品：\n{}".format(title, items)
+    pikmin_name, dist = result
+    return "📍 座標：{}\n最近的飾品設施：\n- {} （距離約 {:.0f}m）".format(title, pikmin_name, dist)
 
 
 # ── 掃描模式 Quick Reply ──────────────────────
@@ -245,8 +244,8 @@ async def _handle_maps_url(event, api, user_id: str, url: str) -> None:
     else:
         # 即時模式
         from linebot.v3.messaging import PushMessageRequest
-        pikmin_set = await query_nearby_pikmin(lat, lon)
-        reply_text = _build_instant_reply(title, pikmin_set)
+        result = await query_nearest_pikmin(lat, lon)
+        reply_text = _build_instant_reply(title, result)
         async with AsyncApiClient(_line_config) as push_client:
             push_api = AsyncMessagingApi(push_client)
             await push_api.push_message(
@@ -271,8 +270,8 @@ async def _handle_location(event, api, user_id: str) -> None:
 
 async def _run_instant_mode(event, api, lat: float, lon: float, title: str) -> None:
     logger.info("即時模式：%s (%.6f, %.6f)", title, lat, lon)
-    pikmin_set = await query_nearby_pikmin(lat, lon)
-    reply_text = _build_instant_reply(title, pikmin_set)
+    result = await query_nearest_pikmin(lat, lon)
+    reply_text = _build_instant_reply(title, result)
     await api.reply_message(
         ReplyMessageRequest(
             reply_token=event.reply_token,

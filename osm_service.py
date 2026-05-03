@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from config import settings
-from mapping import match_all_pikmin
+from mapping import match_all_pikmin, match_pikmin
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +161,75 @@ async def query_nearby_pikmin(
     elements: list[dict] = data.get("elements", [])
     logger.info("Instant query (%.6f, %.6f) r=%dm: %d elements", lat, lon, radius_m, len(elements))
     return match_all_pikmin(elements)
+
+
+async def query_nearest_pikmin(
+    lat: float,
+    lon: float,
+    radius_m: int | None = None,
+) -> tuple[str, float] | None:
+    """
+    Nearest POI mode: query OSM elements with coordinates, find the closest
+    one that matches a pikmin rule, and return (pikmin_name, distance_m).
+    Returns None if nothing found.
+    """
+    if radius_m is None:
+        radius_m = settings.search_radius_m
+
+    # Use scan query to get element coordinates
+    query = _build_scan_query(lat, lon, radius_m)
+
+    try:
+        data = await _fetch_overpass(query)
+    except Exception as exc:
+        logger.error("Overpass nearest query failed: %s", exc)
+        return None
+
+    elements: list[dict] = data.get("elements", [])
+    logger.info("Nearest query (%.6f, %.6f) r=%dm: %d elements", lat, lon, radius_m, len(elements))
+
+    if not elements:
+        return None
+
+    # Find closest element that matches a pikmin rule
+    best_name: str | None = None
+    best_dist: float = float("inf")
+
+    for el in elements:
+        # Get coordinates
+        if el.get("type") == "node":
+            elat, elon = el.get("lat"), el.get("lon")
+        else:
+            center = el.get("center", {})
+            elat, elon = center.get("lat"), center.get("lon")
+
+        if elat is None or elon is None:
+            continue
+
+        # Check if it matches a pikmin rule
+        tags = el.get("tags", {})
+        name = match_pikmin(tags)
+        if name is None:
+            continue
+
+        # Calculate distance using Haversine
+        from math import radians, sin, cos, sqrt, atan2
+        R = 6371000
+        phi1, phi2 = radians(lat), radians(elat)
+        dphi = radians(elat - lat)
+        dlam = radians(elon - lon)
+        a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlam / 2) ** 2
+        dist = R * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+        if dist < best_dist:
+            best_dist = dist
+            best_name = name
+
+    if best_name is None:
+        return None
+
+    logger.info("Nearest pikmin: %s at %.1fm", best_name, best_dist)
+    return best_name, best_dist
 
 
 async def query_scan_elements(
