@@ -14,8 +14,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Regex to extract @lat,lon from a Google Maps URL
-_COORD_RE = re.compile(r"@(-?\d+\.\d+),(-?\d+\.\d+)")
+# Regex patterns to extract coordinates from Google Maps URLs
+# Format 1: @lat,lon  (e.g. /maps/@25.044,121.559,17z)
+_COORD_AT_RE = re.compile(r"@(-?\d+\.\d+),(-?\d+\.\d+)")
+# Format 2: q=lat,lon (e.g. /maps?q=25.044,121.559)
+_COORD_Q_RE = re.compile(r"[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)")
 
 # Detect if a string contains any Google Maps URL
 _MAPS_URL_RE = re.compile(
@@ -38,7 +41,12 @@ def extract_url(text: str) -> str | None:
 
 def _parse_coords(url: str) -> tuple[float, float] | None:
     """Try to extract (lat, lon) from a URL string using regex."""
-    m = _COORD_RE.search(url)
+    # Try @lat,lon format first
+    m = _COORD_AT_RE.search(url)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    # Try q=lat,lon format
+    m = _COORD_Q_RE.search(url)
     if m:
         return float(m.group(1)), float(m.group(2))
     return None
