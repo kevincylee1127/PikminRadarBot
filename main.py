@@ -33,8 +33,8 @@ from linebot.v3.webhooks import (
 import cache_service as cache
 from analyzer import find_best_location, google_maps_url, summarize_pikmin_counts
 from config import settings
-from geo_service import extract_plain_coords, extract_url, resolve_coords
-from osm_service import query_nearest_pikmin, query_scan_elements
+from geo_service import extract_plain_coords, extract_short_url, extract_url, resolve_coords
+from osm_service import query_nearby_pikmin, query_scan_elements
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,13 +80,11 @@ def _verify_signature(body: bytes, signature: str) -> None:
 
 # ── 即時模式回覆 ──────────────────────────────
 
-def _build_instant_reply(title: str, results: list) -> str:
-    if not results:
+def _build_instant_reply(title: str, pikmin_set: set) -> str:
+    if not pikmin_set:
         return "📍 座標：{}\n附近僅有路邊皮克敏 🌿".format(title)
-    items = "\n".join(
-        "- {} （距離約 {:.0f}m）".format(name, dist) for name, dist in results
-    )
-    return "📍 座標：{}\n附近最近的飾品設施：\n{}".format(title, items)
+    items = "\n".join("- {}".format(name) for name in sorted(pikmin_set))
+    return "📍 座標：{}\n附近可能出現的飾品：\n{}".format(title, items)
 
 
 # ── 掃描模式 Quick Reply ──────────────────────
@@ -140,7 +138,7 @@ async def _handle_text(event, api, user_id: str) -> None:
         if cache.is_awaiting_location(user_id):
             await _run_scan_mode(event, api, user_id, lat, lon, title)
         else:
-            results = await query_nearest_pikmin(lat, lon)
+            results = await query_nearby_pikmin(lat, lon)
             reply_text = _build_instant_reply(title, results)
             await api.reply_message(
                 ReplyMessageRequest(
@@ -154,6 +152,14 @@ async def _handle_text(event, api, user_id: str) -> None:
     maps_url = extract_url(text)
     if maps_url:
         await _handle_maps_url(event, api, user_id, maps_url)
+        return
+
+    # ── Google Maps 短網址（maps.app.goo.gl）─────
+    # 先嘗試 follow redirect 解析座標，失敗才顯示提示
+    short_url = extract_short_url(text)
+    if short_url:
+        logger.info("使用者 %s 傳送短網址，嘗試 follow redirect: %s", user_id, short_url)
+        await _handle_maps_url(event, api, user_id, short_url)
         return
 
     if text_lower == "scan":
@@ -253,7 +259,7 @@ async def _handle_location(event, api, user_id: str) -> None:
 
 async def _run_instant_mode(event, api, lat: float, lon: float, title: str) -> None:
     logger.info("即時模式：%s (%.6f, %.6f)", title, lat, lon)
-    results = await query_nearest_pikmin(lat, lon)
+    results = await query_nearby_pikmin(lat, lon)
     reply_text = _build_instant_reply(title, results)
     await api.reply_message(
         ReplyMessageRequest(
@@ -354,7 +360,7 @@ async def _run_from_coords_push(user_id: str, lat: float, lon: float, title: str
         else:
             # 即時模式
             logger.info("即時模式（push）：%s (%.6f, %.6f)", title, lat, lon)
-            results = await query_nearest_pikmin(lat, lon)
+            results = await query_nearby_pikmin(lat, lon)
             reply_text = _build_instant_reply(title, results)
             await push_api.push_message(PushMessageRequest(
                 to=user_id,

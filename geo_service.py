@@ -4,7 +4,7 @@ geo_service.py - Google Maps URL parsing and coordinate extraction
 Supported formats:
   1. Full URL with @lat,lon: https://www.google.com/maps/@25.044548,121.559183,17z
   2. Place URL with @lat,lon: https://www.google.com/maps/place/.../@25.044548,121.559183,...
-  3. Short URL (redirect):   https://maps.app.goo.gl/XXXXX
+  3. Short URL (redirect):   https://maps.app.goo.gl/XXXXX  (coords may not be extractable)
 """
 
 import logging
@@ -27,9 +27,14 @@ _COORD_LNG_RE = re.compile(r'"ln?g(?:itude)?"\s*:\s*(-?\d+\.\d+)')
 # Format 5: center=lat,lon
 _COORD_CENTER_RE = re.compile(r"center=(-?\d+\.\d+),(-?\d+\.\d+)")
 
-# Detect Google Maps full URL (must contain @lat,lon or q=lat,lon to be useful)
+# Detect Google Maps full URL (google.com/maps)
 _MAPS_URL_RE = re.compile(
     r"https?://(?:www\.)?google\.com/maps\S*"
+)
+
+# Short share URLs from Google Maps app (maps.app.goo.gl/XXXX)
+_SHORT_URL_RE = re.compile(
+    r"https?://maps\.app\.goo\.gl/\S+"
 )
 
 # Detect plain coordinate text: "25.044548 121.559183" or "25.044548, 121.559183"
@@ -46,8 +51,14 @@ _HEADERS = {
 
 
 def extract_url(text: str) -> str | None:
-    """Return the first Google Maps full URL found in text, or None."""
+    """Return the first Google Maps full URL (google.com/maps) found in text, or None."""
     m = _MAPS_URL_RE.search(text)
+    return m.group(0) if m else None
+
+
+def extract_short_url(text: str) -> str | None:
+    """Return the first maps.app.goo.gl short URL found in text, or None."""
+    m = _SHORT_URL_RE.search(text)
     return m.group(0) if m else None
 
 
@@ -99,8 +110,7 @@ async def resolve_coords(url: str) -> tuple[float, float] | None:
     Strategy:
       1. Try regex on the original URL.
       2. Manually follow each redirect hop (up to 6), checking the Location
-         header and destination URL at every step — coordinates often appear
-         in an intermediate redirect before Google lands on the preview page.
+         header and destination URL at every step.
       3. Try regex on the final response body.
     """
     # Step 1: direct parse
