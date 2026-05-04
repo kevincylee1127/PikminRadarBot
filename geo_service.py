@@ -77,38 +77,66 @@ async def resolve_coords(url: str) -> tuple[float, float] | None:
     Given a Google Maps URL (full or short), return (lat, lon) or None.
 
     Strategy:
-      1. Try regex on the original URL first (works for full URLs).
-      2. If not found, follow redirects (for short URLs like maps.app.goo.gl).
-      3. Try regex on the final redirected URL.
+      1. Try regex on the original URL.
+      2. Manually follow each redirect hop (up to 6), checking the Location
+         header and destination URL at every step — coordinates often appear
+         in an intermediate redirect before Google lands on the preview page.
+      3. Try regex on the final response body.
     """
-    # Step 1: try direct parse
+    # Step 1: direct parse
     coords = _parse_coords(url)
     if coords:
         logger.debug("Coords from direct URL: %s", coords)
         return coords
 
-    # Step 2: follow redirects
     try:
         async with httpx.AsyncClient(
             timeout=10.0,
             headers=_HEADERS,
-            follow_redirects=True,
+            follow_redirects=False,  # manual hop-by-hop
         ) as client:
-            resp = await client.get(url)
-            final_url = str(resp.url)
-            logger.debug("Redirected to: %s", final_url)
+            current_url = url
+            last_resp = None
 
-        # Step 3: try regex on final URL
-        coords = _parse_coords(final_url)
-        if coords:
-            logger.debug("Coords from redirected URL: %s", coords)
-            return coords
+            for hop in range(6):
+                resp = await client.get(current_url)
+                last_resp = resp
+                logger.debug("Hop %d: %s -> %d", hop, current_url, resp.status_code)
 
-        # Step 4: try regex on response body (some redirects embed coords in HTML)
-        coords = _parse_coords(resp.text)
-        if coords:
-            logger.debug("Coords from response body: %s", coords)
-            return coords
+                # Check Location header at this hop
+                location = resp.headers.get("location", "")
+                if location:
+                    coords = _parse_coords(location)
+                    if coords:
+                        logger.debug("Coords from Location header hop %d: %s", hop, coords)
+                        return coords
+
+                # Check current URL itself
+                coords = _parse_coords(current_url)
+                if coords:
+                    logger.debug("Coords from current URL hop %d", hop)
+                    return coords
+
+                if resp.is_redirect and location:
+                    # Follow next hop
+                    if location.startswith("http"):
+                        current_url = location
+                    else:
+                        from urllib.parse import urljoin
+                        current_url = urljoin(current_url, location)
+                else:
+                    break
+
+            # Final attempt: parse response body of last page
+            if last_resp is not None:
+                try:
+                    body = last_resp.text
+                    coords = _parse_coords(body)
+                    if coords:
+                        logger.debug("Coords from response body")
+                        return coords
+                except Exception:
+                    pass
 
     except httpx.RequestError as exc:
         logger.warning("Failed to resolve Google Maps URL %s: %s", url, exc)
