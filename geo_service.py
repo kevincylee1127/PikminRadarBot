@@ -14,15 +14,22 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Regex patterns to extract coordinates from Google Maps URLs
+# Regex patterns to extract coordinates from Google Maps URLs / HTML
 # Format 1: @lat,lon  (e.g. /maps/@25.044,121.559,17z)
 _COORD_AT_RE = re.compile(r"@(-?\d+\.\d+),(-?\d+\.\d+)")
 # Format 2: q=lat,lon (e.g. /maps?q=25.044,121.559)
 _COORD_Q_RE = re.compile(r"[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)")
+# Format 3: ll=lat,lon (older Google Maps format)
+_COORD_LL_RE = re.compile(r"[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)")
+# Format 4: JSON-like "lat":25.044 / "lng":121.559 or "latitude"/"longitude"
+_COORD_LAT_RE = re.compile(r'"lat(?:itude)?"\s*:\s*(-?\d+\.\d+)')
+_COORD_LNG_RE = re.compile(r'"ln?g(?:itude)?"\s*:\s*(-?\d+\.\d+)')
+# Format 5: center=lat,lon
+_COORD_CENTER_RE = re.compile(r"center=(-?\d+\.\d+),(-?\d+\.\d+)")
 
 # Detect if a string contains any Google Maps URL
 _MAPS_URL_RE = re.compile(
-    r"https?://(maps\.app\.goo\.gl|goo\.gl/maps|www\.google\.com/maps|google\.com/maps)\S*"
+    r"https?://(maps\.app\.goo\.gl|preview\.app\.goo\.gl|goo\.gl/maps|www\.google\.com/maps|google\.com/maps)\S*"
 )
 
 _HEADERS = {
@@ -39,16 +46,29 @@ def extract_url(text: str) -> str | None:
     return m.group(0) if m else None
 
 
-def _parse_coords(url: str) -> tuple[float, float] | None:
-    """Try to extract (lat, lon) from a URL string using regex."""
-    # Try @lat,lon format first
-    m = _COORD_AT_RE.search(url)
+def _parse_coords(text: str) -> tuple[float, float] | None:
+    """Try to extract (lat, lon) from a URL or HTML string using multiple regex patterns."""
+    # @lat,lon
+    m = _COORD_AT_RE.search(text)
     if m:
         return float(m.group(1)), float(m.group(2))
-    # Try q=lat,lon format
-    m = _COORD_Q_RE.search(url)
+    # q=lat,lon
+    m = _COORD_Q_RE.search(text)
     if m:
         return float(m.group(1)), float(m.group(2))
+    # ll=lat,lon
+    m = _COORD_LL_RE.search(text)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    # center=lat,lon
+    m = _COORD_CENTER_RE.search(text)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    # JSON "lat":..., "lng":... (must find both)
+    m_lat = _COORD_LAT_RE.search(text)
+    m_lng = _COORD_LNG_RE.search(text)
+    if m_lat and m_lng:
+        return float(m_lat.group(1)), float(m_lng.group(1))
     return None
 
 
