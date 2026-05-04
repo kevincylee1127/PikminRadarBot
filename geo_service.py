@@ -131,6 +131,8 @@ async def resolve_coords(url: str) -> tuple[float, float] | None:
             if last_resp is not None:
                 try:
                     body = last_resp.text
+                    # Log a snippet to help debug coordinate format
+                    logger.info("Preview body snippet: %s", body[:800])
                     coords = _parse_coords(body)
                     if coords:
                         logger.debug("Coords from response body")
