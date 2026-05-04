@@ -23,6 +23,7 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 from linebot.v3.webhooks import (
+    FollowEvent,
     LocationMessageContent,
     MessageEvent,
     PostbackEvent,
@@ -33,8 +34,7 @@ import cache_service as cache
 from analyzer import find_best_location, google_maps_url, summarize_pikmin_counts
 from config import settings
 from geo_service import extract_plain_coords, extract_url, resolve_coords
-from mapping import PIKMIN_RULES
-from osm_service import query_nearby_pikmin, query_nearest_pikmin, query_scan_elements
+from osm_service import query_nearest_pikmin, query_scan_elements
 
 logging.basicConfig(
     level=logging.INFO,
@@ -162,12 +162,7 @@ async def _handle_text(event, api, user_id: str) -> None:
             ReplyMessageRequest(
                 reply_token=event.reply_token,
                 messages=[TextMessage(
-                    text=(
-                        "📡 戰略掃描模式已啟動！\n"
-                        "請分享你的位置或貼上 Google Maps 連結\n"
-                        "我將掃描 500m 範圍內的設施\n\n"
-                        "（輸入 cancel 可取消）"
-                    ),
+                    text="📡 戰略掃描已啟動，請分享位置或貼座標\n（輸入 cancel 可取消）",
                 )],
             )
         )
@@ -178,108 +173,70 @@ async def _handle_text(event, api, user_id: str) -> None:
         await api.reply_message(
             ReplyMessageRequest(
                 reply_token=event.reply_token,
-                messages=[TextMessage(text="已取消掃描。直接分享位置或貼上 Google Maps 連結可使用即時模式 📍")],
+                messages=[TextMessage(text="已取消掃描 📍")],
             )
         )
 
     else:
-        hint = (
-            "🌱 Pikmin Bloom Radar\n\n"
-            "📍 即時模式：\n"
-            "  • 分享 LINE 位置\n"
-            "  • 貼座標，如：25.0445 121.5592\n\n"
-            "📡 戰略掃描：\n"
-            "  • 輸入 scan 再分享位置或貼座標\n\n"
-            "💡 如何取得座標：\n"
-            "  Google Maps → 長按地點 → 複製上方數字"
-        )
+        menu_text, menu_qr = _build_mode_select_menu()
         await api.reply_message(
             ReplyMessageRequest(
                 reply_token=event.reply_token,
-                messages=[TextMessage(text=hint)],
+                messages=[TextMessage(text=menu_text, quick_reply=menu_qr)],
             )
         )
 
 
 async def _handle_maps_url(event, api, user_id: str, url: str) -> None:
-    """處理 Google Maps 連結，解析座標後走即時模式或掃描模式。"""
+    """處理 Google Maps 完整連結，解析座標後走即時模式或掃描模式。"""
+    from linebot.v3.messaging import PushMessageRequest
+
     logger.info("使用者 %s 傳送 Google Maps URL: %s", user_id, url)
 
-    await api.reply_message(
-        ReplyMessageRequest(
-            reply_token=event.reply_token,
-            messages=[TextMessage(text="🔍 正在解析 Google Maps 連結...")],
-        )
-    )
+    # 先試直接解析（完整 URL 含 @lat,lon 不需要 HTTP 請求）
+    from geo_service import _parse_coords
+    coords = _parse_coords(url)
 
-    coords = await resolve_coords(url)
     if coords is None:
-        # reply_token 已使用，改用 push（需要 user_id）
-        logger.warning("無法從 URL 解析座標: %s", url)
+        # 需要 follow redirect，先回覆讓用戶知道在處理
+        await api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text="🔍 正在解析連結...")],
+            )
+        )
+        coords = await resolve_coords(url)
+
+        if coords is None:
+            logger.warning("無法從 URL 解析座標: %s", url)
+            async with AsyncApiClient(_line_config) as push_client:
+                push_api = AsyncMessagingApi(push_client)
+                await push_api.push_message(
+                    PushMessageRequest(
+                        to=user_id,
+                        messages=[TextMessage(
+                            text="❌ 無法解析此連結的座標\n\n請改用座標直接輸入：\nGoogle Maps 長按地點 → 複製上方數字 → 貼到這裡"
+                        )],
+                    )
+                )
+            return
+
+        # 已回覆，後續用 push
+        lat, lon = coords
+        title = "{:.5f}, {:.5f}".format(lat, lon)
+        logger.info("Google Maps 解析成功（redirect）：(%.6f, %.6f)", lat, lon)
+        await _run_from_coords_push(user_id, lat, lon, title)
         return
 
+    # 直接解析成功，可以用 reply_token
     lat, lon = coords
-    title = "Google Maps 分享位置 ({:.5f}, {:.5f})".format(lat, lon)
-    logger.info("Google Maps 解析成功：(%.6f, %.6f)", lat, lon)
+    title = "{:.5f}, {:.5f}".format(lat, lon)
+    logger.info("Google Maps 解析成功（direct）：(%.6f, %.6f)", lat, lon)
 
     if cache.is_awaiting_location(user_id):
-        # 建立一個假的 event-like 物件傳給 scan mode
-        # 直接呼叫核心邏輯，reply_token 已被使用，用 push message
-        from linebot.v3.messaging import PushMessageRequest
-        async with AsyncApiClient(_line_config) as push_client:
-            push_api = AsyncMessagingApi(push_client)
-            elements = await query_scan_elements(lat, lon, radius_m=500)
-            if not elements:
-                cache.clear_state(user_id)
-                await push_api.push_message(
-                    PushMessageRequest(
-                        to=user_id,
-                        messages=[TextMessage(text="掃描完成，500m 內未找到特殊設施 🌿")],
-                    )
-                )
-                return
-
-            from analyzer import summarize_pikmin_counts
-            pikmin_counts = summarize_pikmin_counts(elements)
-            if not pikmin_counts:
-                cache.clear_state(user_id)
-                await push_api.push_message(
-                    PushMessageRequest(
-                        to=user_id,
-                        messages=[TextMessage(text="掃描完成，500m 內未找到特殊設施 🌿")],
-                    )
-                )
-                return
-
-            cache.set_state(user_id, {
-                "mode": "awaiting_selection",
-                "elements": elements,
-                "lat": lat,
-                "lon": lon,
-                "title": title,
-                "pikmin_counts": pikmin_counts,
-            })
-
-            reply_text, quick_reply = _build_scan_quick_reply(user_id, title, pikmin_counts)
-            await push_api.push_message(
-                PushMessageRequest(
-                    to=user_id,
-                    messages=[TextMessage(text=reply_text, quick_reply=quick_reply)],
-                )
-            )
+        await _run_scan_mode(event, api, user_id, lat, lon, title)
     else:
-        # 即時模式
-        from linebot.v3.messaging import PushMessageRequest
-        results = await query_nearest_pikmin(lat, lon)
-        reply_text = _build_instant_reply(title, results)
-        async with AsyncApiClient(_line_config) as push_client:
-            push_api = AsyncMessagingApi(push_client)
-            await push_api.push_message(
-                PushMessageRequest(
-                    to=user_id,
-                    messages=[TextMessage(text=reply_text)],
-                )
-            )
+        await _run_instant_mode(event, api, lat, lon, title)
 
 
 async def _handle_location(event, api, user_id: str) -> None:
@@ -352,9 +309,108 @@ async def _run_scan_mode(
     )
 
 
+async def _run_from_coords_push(user_id: str, lat: float, lon: float, title: str) -> None:
+    """reply_token 已消耗後，用 Push Message 回傳即時或掃描結果。"""
+    from linebot.v3.messaging import PushMessageRequest
+
+    async with AsyncApiClient(_line_config) as push_client:
+        push_api = AsyncMessagingApi(push_client)
+
+        if cache.is_awaiting_location(user_id):
+            # 掃描模式
+            logger.info("掃描模式（push）：%s (%.6f, %.6f)", title, lat, lon)
+            elements = await query_scan_elements(lat, lon, radius_m=500)
+            if not elements:
+                cache.clear_state(user_id)
+                await push_api.push_message(PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text="掃描完成，500m 內未找到特殊設施 🌿")],
+                ))
+                return
+
+            pikmin_counts = summarize_pikmin_counts(elements)
+            if not pikmin_counts:
+                cache.clear_state(user_id)
+                await push_api.push_message(PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text="掃描完成，500m 內未找到特殊設施 🌿")],
+                ))
+                return
+
+            cache.set_state(user_id, {
+                "mode": "awaiting_selection",
+                "elements": elements,
+                "lat": lat,
+                "lon": lon,
+                "title": title,
+                "pikmin_counts": pikmin_counts,
+            })
+
+            reply_text, quick_reply = _build_scan_quick_reply(user_id, title, pikmin_counts)
+            await push_api.push_message(PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=reply_text, quick_reply=quick_reply)],
+            ))
+        else:
+            # 即時模式
+            logger.info("即時模式（push）：%s (%.6f, %.6f)", title, lat, lon)
+            results = await query_nearest_pikmin(lat, lon)
+            reply_text = _build_instant_reply(title, results)
+            await push_api.push_message(PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=reply_text)],
+            ))
+
+
+def _build_mode_select_menu() -> tuple[str, QuickReply]:
+    """回傳功能選單的提示文字與 QuickReply 按鈕。"""
+    text = (
+        "🌱 Pikmin Bloom Radar\n\n"
+        "請選擇查詢模式："
+    )
+    items = [
+        QuickReplyItem(action=PostbackAction(
+            label="📍 即時查詢",
+            data="action=mode_select&mode=instant",
+            display_text="📍 即時查詢",
+        )),
+        QuickReplyItem(action=PostbackAction(
+            label="📡 區域掃描",
+            data="action=mode_select&mode=scan",
+            display_text="📡 區域掃描",
+        )),
+    ]
+    return text, QuickReply(items=items)
+
+
 async def _handle_postback(event, api, user_id: str) -> None:
     params = urllib.parse.parse_qs(event.postback.data)
     action = params.get("action", [""])[0]
+
+    # ── 模式選擇 ──────────────────────────────────
+    if action == "mode_select":
+        mode = params.get("mode", [""])[0]
+        if mode == "scan":
+            cache.set_state(user_id, {"mode": "awaiting_location"})
+            await api.reply_message(ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(
+                    text="📡 區域掃描啟動！\n請分享位置或貼入座標\n（輸入 cancel 可取消）",
+                )],
+            ))
+            logger.info("使用者 %s 選擇區域掃描", user_id)
+        else:  # instant
+            cache.clear_state(user_id)
+            await api.reply_message(ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(
+                    text="📍 即時查詢準備好了！\n請分享位置或貼入座標",
+                )],
+            ))
+            logger.info("使用者 %s 選擇即時查詢", user_id)
+        return
+
+    # ── 掃描第二階段：目標選擇 ────────────────────
     target_pikmin = params.get("pikmin", [""])[0]
     postback_uid = params.get("uid", [""])[0]
 
@@ -433,7 +489,16 @@ async def callback(
             source = event.source
             user_id = getattr(source, "user_id", None) or ""
 
-            if isinstance(event, MessageEvent):
+            if isinstance(event, FollowEvent):
+                # 使用者加入好友或解除封鎖 → 顯示功能選單
+                menu_text, menu_qr = _build_mode_select_menu()
+                await api.reply_message(ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=menu_text, quick_reply=menu_qr)],
+                ))
+                logger.info("新用戶 %s 加入", user_id)
+
+            elif isinstance(event, MessageEvent):
                 if isinstance(event.message, TextMessageContent):
                     await _handle_text(event, api, user_id)
                 elif isinstance(event.message, LocationMessageContent):
