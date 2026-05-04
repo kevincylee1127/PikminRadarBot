@@ -57,48 +57,33 @@ def _build_scan_query(lat: float, lon: float, radius_m: int) -> str:
 
 
 def _tag_filters(center: str, r: int) -> list:
-    pairs = [
-        ("amenity", "restaurant"),
-        ("amenity", "cafe"),
-        ("shop",    "pastry"),
-        ("shop",    "confectionery"),
-        ("amenity", "cinema"),
-        ("shop",    "chemist"),
-        ("shop",    "drugstore"),
-        ("tourism", "zoo"),
-        ("natural", "wood"),
-        ("landuse", "forest"),
-        ("natural", "water"),
-        ("natural", "coastline"),
-        ("amenity", "post_office"),
-        ("tourism", "gallery"),
-        ("aeroway", "terminal"),
-        ("aeroway", "aerodrome"),
-        ("railway", "station"),
-        ("amenity", "pharmacy"),
-        ("amenity", "arts_centre"),
-        ("shop",    "convenience"),
-        ("shop",    "supermarket"),
-        ("shop",    "bakery"),
-        ("amenity", "library"),
-        ("amenity", "hospital"),
-        ("tourism", "hotel"),
-        ("tourism", "motel"),
-        ("leisure", "stadium"),
-        ("leisure", "park"),
-        ("shop",    "hairdresser"),
-        ("natural", "beach"),
-        ("tourism", "museum"),
+    # Group values by key and use regex matching to keep the query compact.
+    # This prevents 403 errors on mirrors that reject overly long URLs.
+    groups = [
+        ("amenity", ["restaurant", "cafe", "cinema", "post_office",
+                     "pharmacy", "arts_centre", "library", "hospital"]),
+        ("shop",    ["pastry", "confectionery", "chemist", "drugstore",
+                     "convenience", "supermarket", "bakery", "hairdresser"]),
+        ("tourism", ["zoo", "gallery", "hotel", "motel", "museum"]),
+        ("natural", ["wood", "water", "coastline", "beach"]),
+        ("landuse", ["forest"]),
+        ("aeroway", ["terminal", "aerodrome"]),
+        ("railway", ["station"]),
+        ("leisure", ["stadium", "park"]),
     ]
+    # Keys whose elements can be relations (area-type features)
+    area_keys = {"tourism", "natural", "landuse", "aeroway", "leisure"}
+
     filters = []
-    for key, val in pairs:
-        tag = '["{}"="{}"]'.format(key, val)
+    for key, values in groups:
+        regex = "|".join(values)
+        tag = '["{}"~"{}"]'.format(key, regex)
         filters.append('node{}(around:{},{});'.format(tag, r, center))
         filters.append('way{}(around:{},{});'.format(tag, r, center))
-        # relation for area-type tags
-        if key in ("tourism", "natural", "landuse", "aeroway", "leisure"):
+        if key in area_keys:
             filters.append('relation{}(around:{},{});'.format(tag, r, center))
     return filters
+
 
 
 # ── HTTP fetch with retry and mirror fallback ──────────────────────────────────
