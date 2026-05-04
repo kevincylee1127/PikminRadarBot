@@ -152,15 +152,14 @@ async def query_nearest_pikmin(
     lat: float,
     lon: float,
     radius_m: int | None = None,
-) -> tuple[str, float] | None:
+    top_n: int = 3,
+) -> list[tuple[str, float]]:
     """
-    Nearest POI mode: use the stable 'out tags' query (same as instant mode),
-    then find the closest matching element.
+    Nearest POI mode: return up to top_n closest distinct pikmin decor types.
 
-    Nodes have lat/lon in 'out tags' output directly.
-    Ways/relations have no coordinates in 'out tags', so they are treated as
-    distance=0 (they matched 'around:N' so they are definitely nearby).
-    This keeps the query simple and reliable across all mirrors.
+    Uses stable 'out tags' query. Nodes have lat/lon directly; ways/relations
+    have no coords so they are treated as distance=0 (definitely nearby).
+    Returns a list of (pikmin_name, distance_m) sorted by distance.
     """
     from math import atan2, cos, radians, sin, sqrt
 
@@ -171,18 +170,18 @@ async def query_nearest_pikmin(
         data = await _fetch_overpass(query)
     except Exception as exc:
         logger.error("Overpass nearest query failed: %s", exc)
-        return None
+        return []
 
     elements: list[dict] = data.get("elements", [])
     logger.info("Nearest query (%.6f, %.6f) r=%dm: %d elements", lat, lon, search_radius, len(elements))
 
     if not elements:
-        return None
+        return []
 
-    best_name: str | None = None
-    best_dist: float = float("inf")
-
+    # Track best distance per pikmin type
+    best: dict[str, float] = {}
     R = 6371000
+
     for el in elements:
         tags = el.get("tags", {})
         name = match_pikmin(tags)
@@ -201,18 +200,18 @@ async def query_nearest_pikmin(
             else:
                 dist = 0.0
         else:
-            # way/relation: no coords in out tags, treat as present at location
             dist = 0.0
 
-        if dist < best_dist:
-            best_dist = dist
-            best_name = name
+        if name not in best or dist < best[name]:
+            best[name] = dist
 
-    if best_name is None:
-        return None
+    if not best:
+        return []
 
-    logger.info("Nearest pikmin: %s at %.1fm", best_name, best_dist)
-    return best_name, best_dist
+    # Sort by distance, return top_n
+    results = sorted(best.items(), key=lambda x: x[1])[:top_n]
+    logger.info("Top %d nearest: %s", top_n, results)
+    return results
 
 
 async def query_scan_elements(

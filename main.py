@@ -80,11 +80,13 @@ def _verify_signature(body: bytes, signature: str) -> None:
 
 # ── 即時模式回覆 ──────────────────────────────
 
-def _build_instant_reply(title: str, result: tuple | None) -> str:
-    if result is None:
+def _build_instant_reply(title: str, results: list) -> str:
+    if not results:
         return "📍 座標：{}\n附近僅有路邊皮克敏 🌿".format(title)
-    pikmin_name, dist = result
-    return "📍 座標：{}\n最近的飾品設施：\n- {} （距離約 {:.0f}m）".format(title, pikmin_name, dist)
+    items = "\n".join(
+        "- {} （距離約 {:.0f}m）".format(name, dist) for name, dist in results
+    )
+    return "📍 座標：{}\n附近最近的飾品設施：\n{}".format(title, items)
 
 
 # ── 掃描模式 Quick Reply ──────────────────────
@@ -244,8 +246,8 @@ async def _handle_maps_url(event, api, user_id: str, url: str) -> None:
     else:
         # 即時模式
         from linebot.v3.messaging import PushMessageRequest
-        result = await query_nearest_pikmin(lat, lon)
-        reply_text = _build_instant_reply(title, result)
+        results = await query_nearest_pikmin(lat, lon)
+        reply_text = _build_instant_reply(title, results)
         async with AsyncApiClient(_line_config) as push_client:
             push_api = AsyncMessagingApi(push_client)
             await push_api.push_message(
@@ -270,8 +272,8 @@ async def _handle_location(event, api, user_id: str) -> None:
 
 async def _run_instant_mode(event, api, lat: float, lon: float, title: str) -> None:
     logger.info("即時模式：%s (%.6f, %.6f)", title, lat, lon)
-    result = await query_nearest_pikmin(lat, lon)
-    reply_text = _build_instant_reply(title, result)
+    results = await query_nearest_pikmin(lat, lon)
+    reply_text = _build_instant_reply(title, results)
     await api.reply_message(
         ReplyMessageRequest(
             reply_token=event.reply_token,
