@@ -27,9 +27,14 @@ _COORD_LNG_RE = re.compile(r'"ln?g(?:itude)?"\s*:\s*(-?\d+\.\d+)')
 # Format 5: center=lat,lon
 _COORD_CENTER_RE = re.compile(r"center=(-?\d+\.\d+),(-?\d+\.\d+)")
 
-# Detect if a string contains any Google Maps URL
+# Detect Google Maps full URL (must contain @lat,lon or q=lat,lon to be useful)
 _MAPS_URL_RE = re.compile(
-    r"https?://(maps\.app\.goo\.gl|preview\.app\.goo\.gl|goo\.gl/maps|www\.google\.com/maps|google\.com/maps)\S*"
+    r"https?://(?:www\.)?google\.com/maps\S*"
+)
+
+# Detect plain coordinate text: "25.044548 121.559183" or "25.044548, 121.559183"
+_PLAIN_COORD_RE = re.compile(
+    r"^[^\S\r\n]*(-?\d{1,3}\.\d{4,})[,\s]+(-?\d{1,3}\.\d{4,})[^\S\r\n]*$"
 )
 
 _HEADERS = {
@@ -41,9 +46,24 @@ _HEADERS = {
 
 
 def extract_url(text: str) -> str | None:
-    """Return the first Google Maps URL found in text, or None."""
+    """Return the first Google Maps full URL found in text, or None."""
     m = _MAPS_URL_RE.search(text)
     return m.group(0) if m else None
+
+
+def extract_plain_coords(text: str) -> tuple[float, float] | None:
+    """
+    Detect plain coordinate text like '25.044548 121.559183' or '25.044548, 121.559183'.
+    Returns (lat, lon) or None.
+    """
+    m = _PLAIN_COORD_RE.match(text.strip())
+    if not m:
+        return None
+    lat, lon = float(m.group(1)), float(m.group(2))
+    # Sanity check: valid lat/lon ranges
+    if -90 <= lat <= 90 and -180 <= lon <= 180:
+        return lat, lon
+    return None
 
 
 def _parse_coords(text: str) -> tuple[float, float] | None:
@@ -131,8 +151,7 @@ async def resolve_coords(url: str) -> tuple[float, float] | None:
             if last_resp is not None:
                 try:
                     body = last_resp.text
-                    # Log a snippet to help debug coordinate format
-                    logger.info("Preview body snippet: %s", body[:800])
+                    logger.debug("Preview body snippet: %s", body[:200])
                     coords = _parse_coords(body)
                     if coords:
                         logger.debug("Coords from response body")

@@ -32,7 +32,7 @@ from linebot.v3.webhooks import (
 import cache_service as cache
 from analyzer import find_best_location, google_maps_url, summarize_pikmin_counts
 from config import settings
-from geo_service import extract_url, resolve_coords
+from geo_service import extract_plain_coords, extract_url, resolve_coords
 from mapping import PIKMIN_RULES
 from osm_service import query_nearby_pikmin, query_nearest_pikmin, query_scan_elements
 
@@ -131,7 +131,26 @@ async def _handle_text(event, api, user_id: str) -> None:
     text = event.message.text.strip()
     text_lower = text.lower()
 
-    # ── Google Maps URL 偵測 ──────────────────────
+    # ── 純座標文字偵測（如 "25.044548 121.559183"）──
+    plain_coords = extract_plain_coords(text)
+    if plain_coords:
+        lat, lon = plain_coords
+        title = "{:.5f}, {:.5f}".format(lat, lon)
+        logger.info("使用者 %s 輸入純座標: %s", user_id, title)
+        if cache.is_awaiting_location(user_id):
+            await _run_scan_mode(event, api, user_id, lat, lon, title)
+        else:
+            results = await query_nearest_pikmin(lat, lon)
+            reply_text = _build_instant_reply(title, results)
+            await api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_text)],
+                )
+            )
+        return
+
+    # ── Google Maps 完整 URL 偵測 ─────────────────
     maps_url = extract_url(text)
     if maps_url:
         await _handle_maps_url(event, api, user_id, maps_url)
@@ -166,8 +185,13 @@ async def _handle_text(event, api, user_id: str) -> None:
     else:
         hint = (
             "🌱 Pikmin Bloom Radar\n\n"
-            "📍 即時模式：直接分享位置，或貼上 Google Maps 連結\n"
-            "📡 戰略掃描：輸入 scan 再分享位置或貼連結"
+            "📍 即時模式：\n"
+            "  • 分享 LINE 位置\n"
+            "  • 貼座標，如：25.0445 121.5592\n\n"
+            "📡 戰略掃描：\n"
+            "  • 輸入 scan 再分享位置或貼座標\n\n"
+            "💡 如何取得座標：\n"
+            "  Google Maps → 長按地點 → 複製上方數字"
         )
         await api.reply_message(
             ReplyMessageRequest(
